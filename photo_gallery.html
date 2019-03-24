@@ -1,0 +1,1227 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
+<style>
+
+body {
+    display: block;
+    margin: 0 auto;
+    background-color: black;
+    overflow: hidden;
+}
+
+canvas {
+    display: block;
+    margin: 0 auto;
+    background-color: transparent;
+    /*position: absolute;*/
+    top: 0;
+    left: 0;
+}
+</style>
+<script src="jquery-3.2.1.min.js"></script>
+</head>
+<body>
+
+</body>
+
+<script type='text/javascript'>
+
+	
+	let inputFileToLoad = document.createElement('input');
+	inputFileToLoad.type = "file";
+	inputFileToLoad.id = "inputFileToLoad";
+	inputFileToLoad.style.display="none";
+	//inputFileToLoad.multiple=true;
+	inputFileToLoad.webkitdirectory=true;
+	inputFileToLoad.directory=true;
+
+
+	$(inputFileToLoad).change(function(e){
+		initCanvas();
+		//initGestureRecognition();
+		loadMediaFileAsURL();
+	});
+
+
+	let windowInnerWidth = window.innerWidth, windowInnerHeight=window.innerHeight
+	let canvasWidth=windowInnerWidth*devicePixelRatio, canvasHeight=windowInnerHeight*devicePixelRatio;
+
+	let index=0;
+	let subfolders = [];
+	let canvas = dpiCanvas(canvasWidth, canvasHeight);
+	canvas.id="myCanvas";   
+	let ctx;
+	let subWidth;
+	let numHorizontalTiles, numVerticalTiles;
+	
+	let STAGES = {
+		FOLDER_GALLERY:0,
+		MEDIA_GALLERY:1,
+		MEDIA:2
+	};
+	let stage = STAGES.FOLDER_GALLERY;
+	let loadedMedia=0, totalMedia=0, loadedMediaArr = [];
+	let orig, currentPointer;
+	let yScroll=0;
+	let centerFocusX, centerFocusY, xFocusRatio, yFocusRatio;
+	let mediaX, mediaY;
+	let initPinchDistance, dPinchDistance;
+	let scaledWidth, scaledHeight, scale = 1;
+	let wasScrolling=false;
+	let currentMedia;
+	let subIndex;
+	let mediaIndex
+	let previousTime, previousTime2;
+	let orig2;
+	let scrollSpeed;
+	let touchesReached = 0;
+	let scrollingAnimation = undefined;
+	let scrollFrameRate = 50, videoFrameRate = 24;
+	let scrollingUp;
+	let decelleration = 0.1, defaultDecelleration =0.1;
+	let myFlag=true;
+	let shifted = false;
+
+	let videoPlaying = false;
+	let showVideoControls=false;
+	let FITS = {
+		BEST_FIT: 0,
+		FILL_FIT: 1,
+		ACTUAL_SIZE: 2,
+		CUSTOM_FIT: 3
+	}
+	let fit=FITS.BEST_FIT;
+	
+	let filesHaveBeenChosen=false;
+	let touchLock = false;
+	let naturalWidth, naturalHeight;
+	let tilesImageDataRetrieved=false;
+	let videoControlStopwatch;
+	let imgCrop;
+	let tilesImgData;
+
+	let tilesCanvas=false, tilesCTX;
+	let tilesDrawn=0;
+
+	let lastFrameTime = 0;
+
+
+	let dimensionsChanged = false;
+
+	let loadedThumbnails = 0;
+
+	let videosForThumbnails = [];
+
+	let highestIndex=0;
+
+	let showPlaybackRateControls = false;
+
+	let margin=100;
+
+	let yScrollFolder =0;
+
+	document.body.appendChild(inputFileToLoad);
+
+	$(document).click(function(e){
+		if(!filesHaveBeenChosen){
+			filesHaveBeenChosen=true;
+			inputFileToLoad.click();
+		}
+	});
+
+	$(document.body).contextmenu(function(e){
+		e.preventDefault();
+		return false;
+	});
+
+	$(document).keyup(function(e){
+		console.log(e.key);
+		switch(e.key){
+			case "ArrowLeft":
+				if(stage==STAGES.MEDIA){
+					shiftImage(-1);
+				}
+				break;
+			case "ArrowRight":
+				if(stage==STAGES.MEDIA){
+					shiftImage(1);
+				}
+				break;
+			case "Z":
+				if(stage==STAGES.MEDIA){
+					canvasDblClicked();
+				}
+				break;
+			case "P":
+				if(stage==STAGES.MEDIA){
+					if(currentMedia.nodeName=="VIDEO"){
+						if(!videoPlaying){
+							playCurrentVideo();
+						} else {
+							if(currentMedia.paused){
+								currentMedia.promise = currentMedia.play();
+							} else{
+								currentMedia.pause();
+							}
+						}
+					}
+				}
+				break;
+			case "D":
+				requestAnimationFrame(drawImage, canvas);
+				break;
+			case "E":
+				ctx.imageSmoothingEnabled=!ctx.imageSmoothingEnabled;
+				break;
+			case "L":
+				ctx.imageSmoothingQuality='low';
+				break;
+			case "M":
+				ctx.imageSmoothingQuality='medium';
+				break;
+			case "H":
+				ctx.imageSmoothingQuality='high';
+				break;
+			case "Backspace":
+				if(stage==STAGES.MEDIA){
+					exitMediaStage();
+					requestAnimationFrame(drawImage, canvas);
+				} else if(stage==STAGES.MEDIA_GALLERY){
+					stage=STAGES.FOLDER_GALLERY;
+					yScroll=yScrollFolder;
+					loadGallery();
+				}
+				break;
+		}
+	});
+
+	function dpiCanvas(width, height){
+		let myCanvas = document.createElement("canvas");
+		myCanvas.width=width;
+		myCanvas.height=height;
+		myCanvas.style.width = width/devicePixelRatio+"px";
+		myCanvas.style.height = height/devicePixelRatio+"px";
+		//myCanvas.getContext("2d").imageSmoothingEnabled=false;
+		myCanvas.getContext("2d").imageSmoothingQuality="high";
+
+		//dpiCanvas.getContext("2d").setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+		return myCanvas;
+	}
+
+	function updateDimension(theCanvas, newWidth, newHeight){
+		theCanvas.width=newWidth;
+		theCanvas.height=newHeight;
+		theCanvas.style.width = newWidth/devicePixelRatio+"px";
+		theCanvas.style.height = newHeight/devicePixelRatio+"px";
+		//myCanvas.getContext("2d").imageSmoothingEnabled=false;
+		theCanvas.getContext("2d").imageSmoothingQuality="high";
+		if(newWidth<newHeight){
+			margin = newWidth/15;
+		} else {
+			margin = newHeight/15;
+		}
+		yScroll=0;
+		yScrollFolder=0;
+	};
+
+	let imagesVideos = [];
+	let totalFilesCount=0;
+
+	function loadMediaFileAsURL(){
+		touchLock=true;
+	    let filesSelected = inputFileToLoad.files;
+	    //totalFilesCount = filesSelected.length;
+	    console.log(totalFilesCount)
+	    for(let i=0;i<filesSelected.length;i++){
+	    	if(filesSelected[i].type.match("image.*")){
+	    		let media = new Image();
+	    		media.lastModified=filesSelected[i].lastModified;
+				imagesVideos.push(media);
+				media.src = window.URL.createObjectURL(filesSelected[i]);
+				media.webkitRelativePath=filesSelected[i].webkitRelativePath;
+				media.name=filesSelected[i].name;
+				totalFilesCount++;
+				media.onload = function(){
+			    	loadedMedia++;
+				}
+
+	    	} else if(filesSelected[i].type.match("video.*")){
+				let media = document.createElement("video");
+	    		media.lastModified=filesSelected[i].lastModified;
+				imagesVideos.push(media);
+				media.src = window.URL.createObjectURL(filesSelected[i]);
+				media.webkitRelativePath=filesSelected[i].webkitRelativePath;
+				media.name=filesSelected[i].name;
+				totalFilesCount++;
+				media.onloadeddata = function(){
+					//loadedMedia++;
+					console.log("onloadeddata")
+				}
+			}
+			filesSelected[i]=null;
+	    	
+
+	    }
+
+	    inputFileToLoad= null;
+
+	    for (let i = 0; i < imagesVideos.length; i++) {
+	    	let media = imagesVideos[i];
+    		let fileName = media.name;
+	    	let path = media.webkitRelativePath.replace(fileName,"");
+	    	let filePath= media.webkitRelativePath;
+	    	path=path.substring(0,path.length-1);
+	    	let folderName = path.substring(0,path.length).split("/").pop();
+	    	
+	    	media.folderName = folderName;
+
+
+	    	let modFilePath="";
+	    	for(let c=0;c<filePath.length;c++){
+	    		if(filePath.charAt(c)==' '){
+	    			modFilePath+="%20";
+	    		} else {
+	    			modFilePath+=filePath.charAt(c);
+	    		}
+	    	}
+
+	    	media.filePath=modFilePath;
+	    	let pathAlreadyThere = false;
+
+	    	for(j = 0; j<subfolders.length;j++){
+	    		if(subfolders[j].length!=0 && subfolders[j][0]==path){
+	    			subfolders[j].push(media);
+	    			pathAlreadyThere=true;
+	    			break;
+	    		}
+	    	}
+	    	if(!pathAlreadyThere){
+	    		subfolders.push([path, media]);
+	    	}
+	    	
+
+
+	    	if(media instanceof HTMLVideoElement){
+	    		videosForThumbnails.push(media);
+	    	}
+    	}
+	    
+
+	    subfolders = subfolders.filter(function(subfolder){
+	    	return subfolder.length>1;
+	    });
+
+	    for(let i=0;i<subfolders.length;i++){
+	    	let temp = subfolders[i];
+	    	let j=i-1;
+	    	while(j>=0 && subfolders[j][0].substring(0,subfolders[j][0].length).split("/").pop().localeCompare(temp[0].substring(0,temp[0].length).split("/").pop(), undefined, {numeric: true, sensitivity: 'case'})>0){
+	    		
+	    		subfolders[j+1] = subfolders[j];
+	    		j--;
+	    	}
+	    	subfolders[j+1] = temp;
+	    }
+
+	    for(let k=0;k<subfolders.length;k++){
+	    	let array = subfolders[k];
+	    	for(let i = 1; i < array.length; i++) {
+		    	let temp = array[i];
+		   		let j = i - 1;
+		    	//while (j >= 1 && array[j].name.localeCompare(temp.name, undefined, {numeric: true, sensitivity: 'case'})>0) {
+
+		    	while(j>=1 && array[j].lastModified<temp.lastModified){
+		    		//console.log(array[j].lastModified)
+		      		array[j + 1] = array[j];
+		      		j--;
+		    	}
+		    	array[j + 1] = temp;
+		  	}
+	    }
+	      
+	    //document.body.removeChild(inputFileToLoad);
+
+	    //initCanvas();
+	    //loadFolderGallery();
+	    getThumbnails();
+	    $(window).resize(function(){
+	    	let prevWidth = windowInnerWidth;
+			windowInnerWidth=window.innerWidth;
+			windowInnerHeight=window.innerHeight;
+			canvasWidth=windowInnerWidth*devicePixelRatio;
+			canvasHeight=windowInnerHeight*devicePixelRatio;
+			updateDimension(canvas, canvasWidth,canvasHeight);
+			if(stage==STAGES.MEDIA){ 
+				centerMedia();
+				repositionMedia();
+				if(prevWidth!=windowInnerWidth){
+					dimensionsChanged=true;
+				}
+			} else {
+				if(prevWidth!=windowInnerWidth){
+					tilesImageDataRetrieved=false;
+					tilesDrawn=0;
+					createImageTiles();
+				}
+				
+			}
+			requestAnimationFrame(drawImage, canvas);
+		});
+
+	    let tryToLoadGallery = function(){
+	    	if(loadedMedia==totalFilesCount){
+	    		loadGallery();
+	    	} else {
+	    		setTimeout(tryToLoadGallery, 1000/60);
+	    	}
+	    }
+	    tryToLoadGallery();
+	    
+	}
+	
+
+	let initCanvas = function(){
+		windowInnerWidth=window.innerWidth;
+		windowInnerHeight=window.innerHeight;
+		canvasWidth=windowInnerWidth*devicePixelRatio;
+		canvasHeight=windowInnerHeight*devicePixelRatio;
+	    document.body.appendChild(canvas);
+
+		updateDimension(canvas, canvasWidth,canvasHeight);
+	    ctx=canvas.getContext("2d");
+	    //ctx.imageSmoothingQuality="high";
+	    $(canvas).click(canvasClicked);
+	    $(canvas).dblclick(canvasDblClicked);
+		$(canvas).on('touchstart', handleTouchStart);
+		$(canvas).on('touchmove', handleTouchMove);
+		$(canvas).on('touchend', handleTouchEnd);
+	};
+
+	function getThumbnails(){
+		console.log(videosForThumbnails.length)
+		videosForThumbnails.forEach(function(vid){
+			document.body.appendChild(vid);
+			handleVideo(vid);
+		});
+		if(videosForThumbnails.length==0){
+			touchLock=false;
+		}
+	};
+
+	function clearMediaArr(){
+		loadedMediaArr=[];
+		loadedMedia=0;
+		totalMedia=0;
+	};
+
+	function loadGallery(subIndexParam){
+		tilesImageDataRetrieved=false;
+		tilesDrawn=0;
+		clearMediaArr();
+		highestIndex=0;
+		let undefinedSubParam = subIndexParam===undefined;//true if folder gallery false if media gallery
+		totalMedia = undefinedSubParam?subfolders.length:subfolders[subIndexParam].length-1;
+		console.log(totalMedia)
+
+		for(let i=(undefinedSubParam?0:1);i<(undefinedSubParam?totalMedia:totalMedia+1);i++){
+			console.log(i+ " " + undefinedSubParam + " " + totalMedia)
+			loadedMediaArr.push(undefinedSubParam?subfolders[i][1]:subfolders[subIndexParam][i]);
+		}
+		
+		createImageTiles();
+		requestAnimationFrame(drawImage, canvas);
+	};
+
+	function canvasClicked(e){
+		e.stopPropagation();
+		if(touchLock)
+			return;
+
+		let xTile = Math.floor(e.pageX*devicePixelRatio/subWidth);
+		let yTile = Math.floor((e.pageY*devicePixelRatio-yScroll)/subWidth);
+		
+		if(stage==STAGES.FOLDER_GALLERY){
+			subIndex = xTile + yTile*numHorizontalTiles;
+			if(subIndex>=subfolders.length){
+				return;
+			}
+			stage=STAGES.MEDIA_GALLERY;
+			yScroll=0;
+			loadGallery(subIndex);
+		} else if (stage==STAGES.MEDIA_GALLERY && !wasScrolling){
+			stage = STAGES.MEDIA;
+			mediaIndex = xTile + yTile*numHorizontalTiles;
+			loadMedia(mediaIndex);
+		} else if(stage==STAGES.MEDIA){
+			if(currentMedia.nodeName=="VIDEO"){
+				if(!videoPlaying){
+					playCurrentVideo();
+				} else {
+					if(isPointInHorizontalMargins(e.pageX, e.pageY)){
+						console.log(e.pageX);
+						if(isPointInUpperHorizontalMargin(e.pageX, e.pageY)){
+							if(showVideoControls){
+								let rateAdjust = Math.round((e.pageX-canvasWidth/2)/(canvasWidth/2)*3/.25)*.25;
+								if(rateAdjust<0){
+									currentMedia.playbackRate = 1/(1-rateAdjust);
+								} else {
+									currentMedia.playbackRate = 1+rateAdjust;
+								}
+							} else {
+								showVideoControls = true;
+							}
+							videoControlStopwatch=new Date().getTime();
+						} else {
+							if(showVideoControls){
+								currentMedia.currentTime=e.pageX/canvasWidth*currentMedia.duration;
+							} else{
+								showVideoControls = true;
+							}
+							videoControlStopwatch=new Date().getTime();
+						}
+					} else {
+						if(currentMedia.paused){
+						currentMedia.promise = currentMedia.play();
+						} else{
+							currentMedia.pause();
+						}
+					}
+				}
+			}
+		}
+	};
+
+	function canvasDblClicked(e){
+		e.stopPropagation();
+		if(touchLock)
+			return;
+
+		if(stage==STAGES.MEDIA && (!videoPlaying || videoPlaying&&e.pageY<canvasHeight/2)){
+			if(fit==FITS.ACTUAL_SIZE || fit==FITS.CUSTOM_FIT){
+				centerMedia();
+				repositionMedia();
+				fit=FITS.BEST_FIT;
+			} else if(fit==FITS.BEST_FIT){
+
+				if(currentMedia.naturalWidth/currentMedia.naturalHeight<canvasWidth/canvasHeight){
+					scale = canvasWidth/currentMedia.naturalWidth;
+				} else {
+					scale = canvasHeight/currentMedia.naturalHeight;
+				}
+				repositionMedia();
+				fit=FITS.FILL_FIT;
+			} else if(fit==FITS.FILL_FIT){
+				scale=1;
+				repositionMedia();
+				fit=FITS.ACTUAL_SIZE;
+			}
+		}
+		requestAnimationFrame(drawImage, canvas);
+	};
+
+	function playCurrentVideo(){
+		document.body.appendChild(currentMedia);
+		currentMedia.volume=0.5;
+		currentMedia.currentTime=0;
+		currentMedia.loop=true;
+		currentMedia.promise = currentMedia.play();
+		videoPlaying=true;
+		requestAnimationFrame(drawImage, canvas);
+	}
+
+	function centerMedia(){
+		centerFocusX=canvasWidth/2;
+		centerFocusY=canvasHeight/2;
+		xFocusRatio=0.5;
+		yFocusRatio=0.5;
+		
+		
+		if(currentMedia.naturalWidth/currentMedia.naturalHeight<canvasWidth/canvasHeight){
+			scale = canvasHeight/currentMedia.naturalHeight;
+		} else {
+			 scale = canvasWidth/currentMedia.naturalWidth;
+		}
+		if(scale>10){
+			scale=10;
+		}
+		fit=FITS.BEST_FIT;
+	};
+
+	function repositionMedia(){
+		scaledWidth = scale*currentMedia.naturalWidth;
+		scaledHeight = scale*currentMedia.naturalHeight;
+		mediaX = centerFocusX-xFocusRatio*scaledWidth;
+		mediaY = centerFocusY-yFocusRatio*scaledHeight;
+	}
+
+	function loadMedia(mediaIndex){
+		currentMedia=loadedMediaArr[mediaIndex];
+		naturalWidth=currentMedia.naturalWidth;
+		naturalHeight=currentMedia.naturalHeight;
+		centerMedia();
+		repositionMedia();
+		
+		if(currentMedia.nodeName=="VIDEO" && !shifted){
+			playCurrentVideo();
+		}
+		requestAnimationFrame(drawImage, canvas);
+	};
+
+	function separateVideoHandler(vid){
+		//console.log(vid.src);
+		vid.currentTime=1/30;
+		vid.promise = vid.play();
+	    vid.promise.then(_=>{
+	    	
+			console.log("data loaded 2")
+			if(!myFlag){
+				return;
+			}
+		    let vidCanvas = new OffscreenCanvas(vid.videoWidth, vid.videoHeight);
+		    
+		    let vidCtx = vidCanvas.getContext("2d");
+		    vidCtx.imageSmoothingQuality="high";
+		    vid.zeroRepeated=0;
+
+		    //vid.thumbnailInterval = window.setInterval(thumbnailIntervalFunction, 1000/20, vidCtx, vidCanvas, vid);
+		    //vidCtx.drawImage(vid,0,0, vid.videoWidth, vid.videoHeight);
+			let newImgData = vidCtx.getImageData(0,0,vid.videoWidth,vid.videoHeight).data;
+			//let newImgData = 
+
+			if(/*newImgData[3]!=0*/true){
+
+				//let tempImg = new Image();
+
+				let tempImg = vidCanvas.transferToImageBitmap();
+
+				vid.thumbnail=tempImg;
+				//vid.pause();
+				//vid.currentTime=0;
+				vid.naturalWidth=vid.videoWidth;
+				vid.naturalHeight=vid.videoHeight;
+				document.body.removeChild(vid);
+				//window.clearInterval(vid.thumbnailInterval);
+				//tempImg.onload = function(){
+					loadedThumbnails++;
+					loadedMedia++;
+					if(loadedThumbnails==videosForThumbnails.length){
+						for(let i =0;i<videosForThumbnails.length;i++){
+							//window.URL.revokeObjectURL(videosForThumbnails[i].src);
+						}
+						videosForThumbnails=[];
+						touchLock=false;
+						//loadGallery();
+					}
+				} else {
+					vid.pause();
+					vid.currentTime=1/30;
+					setTimeout(separateVideoHandler, 1000, vid);
+				}
+	    });
+	}
+
+	function handleVideo(vidd){
+
+		let vidCtx;
+		let vidCanvas;
+		let vid=vidd;
+
+		/*vid.addEventListener( "loadeddata", function (e) {
+			if(canplayed){
+				return;
+			}
+			console.log("data loaded 2")
+			canplayed=true;
+			if(!myFlag){
+				return;
+			}
+		    vidCanvas = new OffscreenCanvas(vid.videoWidth, vid.videoHeight);
+		    
+		    vidCtx = vidCanvas.getContext("2d");
+		    vidCtx.imageSmoothingQuality="high";
+		    vid.zeroRepeated=0;
+
+		    vid.thumbnailInterval = window.setInterval(thumbnailIntervalFunction, 1000/20, vidCtx, vidCanvas, vid);
+
+		});*/
+		vid.volume=0;
+		vid.loop=true;
+	    separateVideoHandler(vid);
+	    //vid.currentTime=1/30;
+	}
+	
+	function thumbnailIntervalFunction(vidCtx, vidCanvas, vid){
+		if(vid.videoWidth==0 || vid.videoHeight==0){
+			//vid.pause();
+			//vid.currentTime=0;
+			//document.body.removeChild(vid);
+			window.clearInterval(vid.thumbnailInterval);
+			loadedThumbnails++;
+			loadedMedia++;
+			if(loadedThumbnails==videosForThumbnails.length){
+				for(let i =0;i<videosForThumbnails.length;i++){
+					//window.URL.revokeObjectURL(videosForThumbnails[i].src);
+				}
+				videosForThumbnails=[];
+				touchLock=false;
+				//loadGallery();
+			}
+			return;
+		}
+
+		if(vid.currentTime>0){
+			vidCtx.drawImage(vid,0,0, vid.videoWidth, vid.videoHeight);
+			let newImgData = vidCtx.getImageData(0,0,vid.videoWidth,vid.videoHeight).data;
+
+			if(newImgData[3]!=0){
+
+				//let tempImg = new Image();
+
+				let tempImg = vidCanvas.transferToImageBitmap();
+
+				vid.thumbnail=tempImg;
+				//vid.pause();
+				//vid.currentTime=0;
+				vid.naturalWidth=vid.videoWidth;
+				vid.naturalHeight=vid.videoHeight;
+				document.body.removeChild(vid);
+				window.clearInterval(vid.thumbnailInterval);
+				//tempImg.onload = function(){
+					loadedThumbnails++;
+					loadedMedia++;
+					if(loadedThumbnails==videosForThumbnails.length){
+						for(let i =0;i<videosForThumbnails.length;i++){
+							//window.URL.revokeObjectURL(videosForThumbnails[i].src);
+						}
+						videosForThumbnails=[];
+						touchLock=false;
+						//loadGallery();
+					}
+				//}
+			} else {
+				vid.zeroRepeated=0;
+			}
+		} else if(vid.zeroRepeated>2){
+			//vid.currentTime=1/videoFrameRate;
+			vid.zeroRepeated=0;
+		} else {
+			vid.zeroRepeated++;
+		}	
+	};
+
+	function handleTouchStart(e){
+		e.stopPropagation();
+		if(touchLock){
+			return;
+		}
+		let touches = e.touches;
+		if(touches.length==1){
+			orig = {x:touches[0].pageX, y:touches[0].pageY};
+			currentPointer = orig;
+			if(scrollSpeed!=0){
+				scrollSpeed=0;
+				decelleration=defaultDecelleration;
+				scrollingAnimation=clearInterval(scrollingAnimation);
+				wasScrolling=true;
+			} else{
+				wasScrolling=false;
+			}
+		
+			previousTime=new Date().getTime();
+		}
+
+		else if(touches.length==2){
+			let firstTouch = touches[0];
+			let secondTouch = touches[1];
+			centerFocusX = (firstTouch.pageX + secondTouch.pageX)*devicePixelRatio/2;
+			centerFocusY = (firstTouch.pageY + secondTouch.pageY)*devicePixelRatio/2;
+			initPinchDistance= Math.sqrt(Math.pow((firstTouch.pageX - secondTouch.pageX)*devicePixelRatio,2), 
+				Math.pow((firstTouch.pageY - secondTouch.pageY)*devicePixelRatio,2));
+			xFocusRatio = (centerFocusX-mediaX)/scaledWidth;
+			yFocusRatio = (centerFocusY-mediaY)/scaledHeight;
+		}
+	};
+	    
+	function handleTouchMove(e){
+
+		e.stopPropagation();
+		e.preventDefault();
+		if(touchLock){
+			return;
+		}
+		
+		let touches = e.touches;
+		if(stage==STAGES.FOLDER_GALLERY || stage==STAGES.MEDIA_GALLERY){
+			yScroll += touches[0].pageY-orig.y;
+			yScrollFolder = stage==STAGES.FOLDER_GALLERY?yScroll:yScrollFolder;
+			let currentTime = new Date().getTime();
+			scrollingUp=(touches[0].pageY-orig.y)<0?true:false;
+
+
+			try{
+				scrollSpeed = 0.8*Math.abs((touches[0].pageY-orig2.y)/(currentTime-previousTime2));
+			} catch(err){
+				scrollSpeed = 0.8*Math.abs((touches[0].pageY-orig.y)/(currentTime-previousTime));
+			}
+			
+			previousTime2=previousTime;
+			previousTime=currentTime;
+			orig2=orig;
+			orig = {x:touches[0].pageX, y:touches[0].pageY};
+		} else if(stage==STAGES.MEDIA && touchesReached!=3){
+			if(touches.length==1){
+				if(!isPointInMargins(currentPointer.x,currentPointer.y) && !isPointInMargins(touches[0].pageX,touches[0].pageY)){
+					let dx = touches[0].pageX-currentPointer.x;
+					let dy = touches[0].pageY-currentPointer.y;
+					mediaX+=dx;
+					mediaY+=dy;
+					if(fit==FITS.FILL_FIT){
+						if(currentMedia.naturalWidth/currentMedia.naturalHeight<canvasWidth/canvasHeight){
+							mediaX = centerFocusX-xFocusRatio*scaledWidth;
+						} else {
+							mediaY = centerFocusY-yFocusRatio*scaledHeight;
+						}
+					} else {
+						fit = FITS.CUSTOM_FIT;
+					}
+					currentPointer = {x:touches[0].pageX, y:touches[0].pageY};
+				}
+			} else if(touches.length==2){
+				let firstTouch = touches[0];
+	    		let secondTouch = touches[1];
+	    		let newPinchDistance = Math.sqrt(Math.pow(firstTouch.pageX - secondTouch.pageX,2) + Math.pow(firstTouch.pageY - secondTouch.pageY,2));
+	    		dPinchDistance= newPinchDistance-initPinchDistance;
+	    		initPinchDistance=newPinchDistance;
+	    		scale+=dPinchDistance/200;
+	    		fit = FITS.CUSTOM_FIT;
+	    		repositionMedia();
+			}
+		}
+		requestAnimationFrame(drawImage, canvas);
+	};
+
+	function exitMediaStage(){
+		touchesReached=0;
+		shifted=false;
+		if(videoPlaying){
+			videoPlaying=false;
+			showVideoControls=false;
+			currentMedia.playbackRate=1;
+			document.body.removeChild(currentMedia);
+			lastFrameTime=0;
+		}
+		stage=STAGES.MEDIA_GALLERY;
+		if(dimensionsChanged){
+			tilesImageDataRetrieved=false;
+			tilesDrawn=0;
+			createImageTiles();
+			dimensionsChanged=false;
+		}
+	};
+
+	function handleTouchEnd(e){
+		e.stopPropagation();
+		//console.log(e);
+		let touches= e.touches;
+		let changedTouches = e.changedTouches;
+		if(yScroll>0 || numVerticalTiles*subWidth<=canvasHeight){
+			yScroll=0;
+			scrollSpeed=0;
+		} else if(yScroll<canvasHeight-numVerticalTiles*subWidth){
+			yScroll=canvasHeight-numVerticalTiles*subWidth;
+			scrollSpeed=0;
+		}
+		if(stage==STAGES.MEDIA){
+			if(touchesReached==3){
+				if(e.touches.length==0){
+					exitMediaStage();
+				}
+			} else if(touchesReached==5){
+				if(e.touches.length==0){
+					touchesReached=0;
+					touchLock=!touchLock;
+				}
+			}
+
+			else{
+				if(e.changedTouches.length + e.touches.length==3 && !touchLock){
+
+					if(touchesReached<2){
+						touchesReached=3;
+					}
+				
+				} else if(e.changedTouches.length + e.touches.length==5){
+					touchesReached=5;
+				} else if (e.changedTouches.length==1 && e.touches.length==0 && !touchLock){
+					let finalX = e.changedTouches[0].pageX;
+					let finalY = e.changedTouches[0].pageY;
+					let dx = finalX-orig.x;
+					let dy = finalY-orig.y;
+					let wasPointInHorizontalMargins = isPointInHorizontalMargins(orig.x,orig.y) && isPointInHorizontalMargins(e.changedTouches[0].pageX, e.changedTouches[0].pageY);
+					let wasPointInVerticalMargins = isPointInVerticalMargins(orig.x,orig.y) && isPointInVerticalMargins(e.changedTouches[0].pageX, e.changedTouches[0].pageY);
+					if(wasPointInHorizontalMargins || wasPointInVerticalMargins){
+						if(wasPointInHorizontalMargins){
+							if(Math.abs(dx)>Math.abs(1.5*dy) && dx<-20){
+				    			shiftImage(1);
+				    		} else if(Math.abs(dx)>Math.abs(1.5*dy) && dx>20){
+				    			shiftImage(-1);
+			    			}
+						}
+						if(wasPointInVerticalMargins){
+							if(Math.abs(dy)>Math.abs(1.5*dx) && dy<-20){
+			    			shiftImage(-1);
+				    		} else if(Math.abs(dy)>Math.abs(1.5*dx) && dy>20){
+				    			shiftImage(1);
+			    			}
+						}
+					} else if(fit==FITS.FILL_FIT) {
+						if(currentMedia.naturalWidth/currentMedia.naturalHeight<canvasWidth/canvasHeight){
+							if(mediaY>0){
+								mediaY=0;
+							} else if(mediaY+scaledHeight<canvasHeight){
+								mediaY=canvasHeight-scaledHeight;
+							}
+						} else {
+							if(mediaX>0){
+								mediaX=0;
+							} else if(mediaX+scaledWidth<canvasWidth){
+								mediaX=canvasWidth-scaledWidth;
+							}
+						}
+					}
+				}
+			}
+			
+			
+		} else {
+			if(e.changedTouches.length==1 && e.touches.length==0){
+				if(scrollSpeed!=0){
+					scrollingAnimation = setInterval(scrolling,1000/scrollFrameRate);
+				}
+			}
+			if(stage==STAGES.MEDIA_GALLERY){
+				if(e.changedTouches.length + e.touches.length==3){
+					e.preventDefault();
+
+					stage=STAGES.FOLDER_GALLERY;
+					yScroll=yScrollFolder;
+					loadGallery();
+				}
+			}
+		}
+		orig = {};
+		requestAnimationFrame(drawImage, canvas);
+	};
+	    
+	function shiftImage(direction){
+		
+		if(direction==1){
+			mediaIndex=(mediaIndex==loadedMediaArr.length-1)?0:mediaIndex+1;
+		} else{
+			mediaIndex=(mediaIndex==0)?loadedMediaArr.length-1:mediaIndex-1;
+		}
+		
+		if(videoPlaying){
+			videoPlaying=false;
+			document.body.removeChild(currentMedia);
+			lastFrameTime=0;
+		}
+		shifted = true;
+		loadMedia(mediaIndex);
+	}
+
+	function scrolling(){
+		yScroll+=scrollingUp?-scrollSpeed*1000/scrollFrameRate:scrollSpeed*1000/scrollFrameRate;
+		yScrollFolder = stage==STAGES.FOLDER_GALLERY?yScroll:yScrollFolder;
+		scrollSpeed=scrollSpeed-decelleration/scrollFrameRate;
+		
+		if(scrollSpeed<=0){
+			scrollingAnimation=clearInterval(scrollingAnimation);
+			scrollSpeed=0;
+			decelleration=defaultDecelleration;
+		}
+		if(yScroll>0 || numVerticalTiles*subWidth<=canvasHeight){
+			scrollingAnimation=clearInterval(scrollingAnimation);
+			yScroll=0;
+			scrollSpeed=0;
+			decelleration=defaultDecelleration;
+		} else if(yScroll<canvasHeight-numVerticalTiles*subWidth){
+			scrollingAnimation=clearInterval(scrollingAnimation);
+			yScroll=canvasHeight-numVerticalTiles*subWidth;
+			scrollSpeed=0;
+			decelleration=defaultDecelleration;
+		}
+		requestAnimationFrame(drawImage, canvas);
+	};
+	   
+	function isPointInHorizontalMargins(px,py){
+		//let margin = 100;
+		return !(py*devicePixelRatio>margin && py*devicePixelRatio<canvasHeight-margin);
+	};
+
+	function isPointInUpperHorizontalMargin(px,py){
+		//let margin = 100;
+
+		return py*devicePixelRatio<=margin;
+	};
+
+	function isPointInVerticalMargins(px,py){
+		//let margin = 100;
+		if(px*devicePixelRatio>margin && px*devicePixelRatio<canvasWidth-margin){
+			return false;
+		}
+		return true;
+	};
+
+	function isPointInMargins(px,py){
+		return isPointInHorizontalMargins(px,py) || isPointInVerticalMargins(px,py);
+	};
+
+	function drawTile(media, subIndex){
+		let sx, sy, swidth, sheight, y=Math.floor(subIndex/numHorizontalTiles)*subWidth+1, width=subWidth-2, height=subWidth-2;
+    	let x = subIndex%numHorizontalTiles*subWidth+1;
+
+    	if(media.naturalWidth<media.naturalHeight){
+    		sx=0;
+    		sy=(media.naturalHeight-media.naturalWidth)/2;
+    		swidth=media.naturalWidth;
+    		sheight=media.naturalWidth;
+    	} else {
+    		sx=(media.naturalWidth-media.naturalHeight)/2;
+    		sy=0;
+    		swidth=media.naturalHeight;
+    		sheight=media.naturalHeight;
+    	}
+
+    	if(media.nodeName=="IMG"){
+	    	tilesCTX.drawImage(media,sx,sy,swidth,sheight,x,y,width,height);
+		} else if(media.nodeName=="VIDEO" && !(typeof media.thumbnail === "undefined")){
+	    	tilesCTX.drawImage(media.thumbnail,sx,sy,swidth,sheight,x,y,width,height);
+		}
+
+		if(stage==STAGES.FOLDER_GALLERY){
+
+			tilesCTX.fillStyle = "rgba(0,0,0,0.4)";
+			tilesCTX.fillRect(x,y+subWidth-2-subWidth/10-5,subWidth-2,subWidth/10+5);
+
+			//let textCanvas = dpiCanvas(subWidth-5-5, subWidth/10+2);
+			let textCanvas = new OffscreenCanvas(subWidth-5-5,subWidth/10+2);
+			//textCanvas.width = (subWidth-5-5);
+			//textCanvas.height = (subWidth/10+2);
+			let textCTX = textCanvas.getContext("2d");
+
+			//document.body.appendChild(textCanvas);
+
+			textCTX.fillStyle = "rgba(255,255,255,0.4)";
+    		textCTX.textBaseline="bottom";
+    		textCTX.font= Math.floor(subWidth/10) + 'px Arial';
+
+    		textCTX.fillText(subfolders[subIndex][0].substring(0,subfolders[subIndex][0].length).split("/").pop(), 0, subWidth/10);
+    		let textImgData = textCTX.getImageData(0,0,textCanvas.width,textCanvas.height);
+
+    		tilesCTX.drawImage(textCanvas,x+4, y+subWidth-subWidth/10-5);
+    		//tilesCTX.fillText(media.folderName,x+4,y+subWidth-4);
+    		//document.body.removeChild(textCanvas);
+		}
+	}
+
+	function createImageTiles(index){
+
+		numHorizontalTiles = stage==STAGES.FOLDER_GALLERY?(canvasWidth>canvasHeight?5:3):(canvasWidth>canvasHeight?8:5);
+		subWidth=canvasWidth/numHorizontalTiles;
+		if(tilesCanvas==false){
+			tilesCanvas = new OffscreenCanvas(canvasWidth, Math.ceil(totalMedia/numHorizontalTiles)*subWidth);
+		}
+		tilesCTX = tilesCanvas.getContext("2d");
+		tilesCTX.imageSmoothingQuality="high";
+		if(index===undefined){
+			numVerticalTiles=Math.ceil(0/numHorizontalTiles);
+			tilesDrawn=0;
+			for(let i=0;i<totalMedia;i++){
+				let media = loadedMediaArr[i];
+				drawTile(media, i);
+				tilesDrawn++;
+				numVerticalTiles=Math.ceil((i+1)/numHorizontalTiles);
+				if(i%20==0){
+					requestAnimationFrame(drawImage, canvas);
+				}
+			}
+			requestAnimationFrame(drawImage, canvas);
+		} else {
+			numVerticalTiles=Math.ceil((highestIndex+1)/numHorizontalTiles);
+			let media = loadedMediaArr[index];
+			drawTile(media, i);
+			tilesDrawn++;
+		}
+
+
+		if(tilesDrawn==totalMedia){
+			tilesImgData = tilesCTX.getImageData(0,0,tilesCanvas.width,tilesCanvas.height);
+			ctx.clearRect(0,0,canvasWidth,canvasHeight);
+			ctx.putImageData(tilesImgData,0,yScroll);
+			tilesImageDataRetrieved=true;
+			tilesCanvas=false;
+			highestIndex=0;
+		}
+	};
+
+	function drawImage(elapsedTime){
+
+		if(stage==STAGES.MEDIA){
+			
+			imgCrop = new Object();
+			imgCrop.x1 = -mediaX/scaledWidth*naturalWidth;
+			imgCrop.x2 = (-mediaX+canvasWidth)/scaledWidth*naturalWidth;
+			imgCrop.y1 = -mediaY/scaledHeight*naturalHeight;
+			imgCrop.y2 = (-mediaY+canvasHeight)/scaledHeight*naturalHeight;
+
+			if(imgCrop.x1<0){
+				imgCrop.x1=0;
+			}
+			if(mediaX+scaledWidth<=canvasWidth){
+				imgCrop.x2=naturalWidth;
+			}
+			if(imgCrop.y1<0){
+				imgCrop.y1=0;
+			}
+			if(mediaY+scaledHeight<=canvasHeight){
+				imgCrop.y2=naturalHeight;
+			}
+
+			let drawX, drawY, drawWidth, drawHeight;
+			if(mediaX<0){
+				drawX=0;
+			} else {
+				drawX=mediaX;
+			}
+			if(mediaY<0){
+				drawY=0;
+			} else{
+				drawY=mediaY;
+			}
+			drawWidth = (imgCrop.x2-imgCrop.x1)*scale;
+
+			
+			if(currentMedia.nodeName=="IMG"){
+				ctx.clearRect(0,0,canvasWidth,canvasHeight);
+				ctx.drawImage(currentMedia, imgCrop.x1, imgCrop.y1, imgCrop.x2-imgCrop.x1, imgCrop.y2-imgCrop.y1, 
+						drawX, drawY, (imgCrop.x2-imgCrop.x1)*scale, (imgCrop.y2-imgCrop.y1)*scale);
+			} else if(currentMedia.nodeName=="VIDEO"){
+				if(!videoPlaying && shifted){
+					ctx.clearRect(0,0,canvasWidth,canvasHeight);
+					ctx.drawImage(currentMedia.thumbnail, imgCrop.x1, imgCrop.y1, imgCrop.x2-imgCrop.x1, imgCrop.y2-imgCrop.y1, 
+						drawX, drawY, (imgCrop.x2-imgCrop.x1)*scale, (imgCrop.y2-imgCrop.y1)*scale);
+				} else if(videoPlaying){
+
+					let delta = elapsedTime - (lastFrameTime);
+				    
+				    requestAnimationFrame(drawImage, canvas);
+
+				    if(lastFrameTime && delta < 1000/videoFrameRate) {
+				    	//console.log("pre deltaa " + delta);
+				    	return;
+				    }
+
+				    //console.log("deltaa " + delta);
+				    
+				    lastFrameTime = elapsedTime - (delta%(1000/videoFrameRate));
+
+					//console.log("vid time " + currentMedia.currentTime)
+
+					if(currentMedia.currentTime!=0){
+						ctx.clearRect(0,0,canvasWidth,canvasHeight);
+						if(scale>2.75){
+							ctx.imageSmoothingQuality="medium";
+						} else if(scale>3.75){
+							ctx.imageSmoothingQuality="low";
+						}
+						ctx.drawImage(currentMedia, imgCrop.x1, imgCrop.y1, imgCrop.x2-imgCrop.x1, imgCrop.y2-imgCrop.y1, 
+						drawX, drawY, (imgCrop.x2-imgCrop.x1)*scale, (imgCrop.y2-imgCrop.y1)*scale);
+						ctx.imageSmoothingQuality="high";
+					}
+
+					//ctx.imageSmoothingEnabled=false;
+					//ctx.imageSmoothingQuality="low";
+					
+					//ctx.imageSmoothingEnabled=true;
+					//ctx.imageSmoothingQuality="high";
+				
+					if(currentMedia.currentTime==0){
+						//console.log("img data of 0 " + ctx.getImageData(0,0,10,10).data[3]);
+					}
+					
+					if(showVideoControls){
+						if(Date.now() - videoControlStopwatch>3000){
+							showVideoControls=false;
+						}
+
+						ctx.fillStyle = 'rgba(0,0,0,0.25)';
+						//50
+						ctx.fillRect(0,canvasHeight-margin,canvasWidth,margin);
+						ctx.fillRect(0,0,canvasWidth,margin);
+						ctx.fillStyle= 'rgba(255,255,255,0.4)';
+						ctx.fillRect(0,canvasHeight-margin,canvasWidth*currentMedia.currentTime/currentMedia.duration,margin);
+						let rateWidth;
+						if(currentMedia.playbackRate<1){
+							let rateAdjust = 1/currentMedia.playbackRate-1;
+							rateWidth= canvasWidth/2-rateAdjust/3*canvasWidth/2;
+						} else {
+							let rateAdjust = currentMedia.playbackRate-1;
+							rateWidth= canvasWidth/2+rateAdjust/3*canvasWidth/2;
+						}
+						ctx.fillRect(0,0,rateWidth,margin);
+
+						ctx.fillStyle = 'rgba(0,0,0,0.4)';
+						for(let i = 0;i<12;i+=4){
+							ctx.fillRect(canvasWidth/2-6+i, margin, 2, 40);
+							ctx.fillRect(canvasWidth/3-6+i, margin, 2, 20);
+							ctx.fillRect(canvasWidth*2/3-6+i, margin, 2, 20);
+						}
+						ctx.fillStyle = 'rgba(255,255,255,0.4)';
+						for(let i = 2;i<12;i+=4){
+							ctx.fillRect(canvasWidth/2-6+i, margin, 2, 40);
+							ctx.fillRect(canvasWidth/3-6+i, margin, 2, 20);
+							ctx.fillRect(canvasWidth*2/3-6+i, margin, 2, 20);
+						}
+						ctx.fillStyle = 'rgba(0,0,0,0.4)';
+						for(let i = 0;i<6;i+=2){
+							ctx.fillRect(canvasWidth/6-3+i, margin, 1, 10);
+							ctx.fillRect(canvasWidth*5/6-3+i, margin, 1, 10);
+						}
+						ctx.fillStyle = 'rgba(255,255,255,0.4)';
+						for(let i = 1;i<6;i+=2){
+							ctx.fillRect(canvasWidth/6-3+i, margin, 1, 10);
+							ctx.fillRect(canvasWidth*5/6-3+i, margin, 1, 10);
+						}
+					}
+
+					
+				}
+			}
+		} else {
+			let delta = elapsedTime - (lastFrameTime);
+		    
+			if(tilesImageDataRetrieved){
+				if (lastFrameTime && delta < 1000/scrollFrameRate && scrollSpeed!=0) {
+			      return;
+			    }
+			    lastFrameTime = elapsedTime - (delta%(1000/scrollFrameRate));
+
+				ctx.clearRect(0,0,canvasWidth,canvasHeight);
+				ctx.putImageData(tilesImgData,0,yScroll);
+			} else {
+				if (lastFrameTime && delta < 1000/33 && tilesDrawn!=totalMedia) {
+			      return;
+			    }
+			    lastFrameTime = elapsedTime - (delta%(1000/33));
+
+				ctx.clearRect(0,0,canvasWidth,canvasHeight);
+				ctx.drawImage(tilesCanvas,0,yScroll);
+			}
+		}	
+	};
+</script>
+<script src="gesture.js"></script>
+
+</html>
