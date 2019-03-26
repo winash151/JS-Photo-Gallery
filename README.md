@@ -1,5 +1,7 @@
 # JS Photo Gallery
 
+Open photo-gallery.html in the browser with other files in the same folder. I've tested it mostly on Chrome but it should work in other browsers as well. Click on the page to open up folder input dialogue.
+
 Select a folder from your computer to upload. Preferably less than 1000 photos worth.
 
 Video thumbnails don't currently work. They just show as black.
